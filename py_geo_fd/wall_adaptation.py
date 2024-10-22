@@ -5,7 +5,6 @@ import numpy as np
 from functools import partial
 import multiprocessing as mp
 from scipy.interpolate import UnivariateSpline, RectBivariateSpline
-
 import meshio, vtk, time
 import vtkmodules.util.numpy_support as ns
 
@@ -21,11 +20,10 @@ class Timer(object):
         self.tstart = time()
 
     def __exit__(self, type, value, traceback):
+        name = ""
         if self.name:
-            print(
-                "[%s]\n" % self.name,
-            )
-        print("Elapsed: %s" % (time() - self.tstart))
+            name = "%s - " % self.name
+        print(name + "Elapsed: %s" % (time() - self.tstart))
 
 
 def cylinder_convolve(image, kernel=np.ones((3, 3)) / 9):

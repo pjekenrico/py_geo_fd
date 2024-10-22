@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py_geo_fd"
+version = "1.0.0"
+description = "Virtual Flow Diverter deployment tool"
+readme = "README.md"
+keywords = ["virtual flow diverter deployment", "intracranial aneurysms"]
+license = {text = "MIT License"}
+requires-python = ">=3.9, <4"
+dependencies = [
+    "numpy",
+    "scipy",
+    "vtk",
+    "meshio"
+]
+
+[project.urls]
+Homepage = "https://github.com/pjekenrico/py_geo_fd"
+
+[[project.authors]]
+name = "P. Jeken-Rico"
+email = "pablojeken@hotmail.com"
