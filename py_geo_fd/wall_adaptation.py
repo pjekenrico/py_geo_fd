@@ -17,16 +17,18 @@ class Timer(object):
         self.name = name
 
     def __enter__(self):
-        self.tstart = time()
+        self.tstart = time.time()
 
     def __exit__(self, type, value, traceback):
         name = ""
         if self.name:
             name = "%s - " % self.name
-        print(name + "Elapsed: %s" % (time() - self.tstart))
+        print(name + "Elapsed: %s" % (time.time() - self.tstart))
 
 
-def cylinder_convolve(image, kernel=np.ones((3, 3)) / 9):
+def cylinder_convolve(
+    image: np.ndarray, kernel: np.ndarray = np.ones((3, 3)) / 9
+) -> np.ndarray:
     # Get dimensions of the image and kernel
     kernel_height, kernel_width = kernel.shape
 
@@ -79,7 +81,7 @@ def read_surface_from_vtp(filename: str) -> list[np.ndarray, np.ndarray]:
     return points, numpy_cells
 
 
-def write_envelope_to_vtu(filename: str, points: np.ndarray, data=None):
+def write_envelope_to_vtu(filename: str, points: np.ndarray, data=None) -> None:
     """Mesh the points of the shape [n_l, n_rad] into a triangular surface that represents a cylindric envelope.
 
     Args:
@@ -119,7 +121,7 @@ def write_envelope_to_vtu(filename: str, points: np.ndarray, data=None):
 
 def np_ray_triangle_intersection(
     ray_near: np.ndarray, ray_dir: np.ndarray, trias: np.ndarray, eps: float = 1e-6
-):
+) -> np.ndarray:
     """
     Möller-Trumbore intersection algorithm in pure python
     trias [N_trias, N_edge, N_dim]
@@ -168,7 +170,9 @@ def np_ray_triangle_intersection(
     return min_dist
 
 
-def get_candidate_trias(trias, pt, radius):
+def get_candidate_trias(
+    trias: np.ndarray, pt: np.ndarray | float, radius: float
+) -> np.ndarray:
     center_pts = np.mean(trias, axis=1)
     candidates = np.where(np.linalg.norm(center_pts - pt[None], axis=1) < radius)
     return trias[candidates]
@@ -311,3 +315,4 @@ class Adapt_Radius(object):
             data.update({"r": radia.reshape(-1)})
 
         write_envelope_to_vtu(file_path, points, data)
+        return

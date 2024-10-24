@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
-def compare_tuple(tuple_a, tuple_b):
+def compare_tuple(tuple_a, tuple_b) -> bool:
     return np.all((np.array(tuple_a) == np.array(tuple_b)))
 
 
-def mesh_strut(old_base: np.ndarray, new_base: np.ndarray):
+def mesh_strut(old_base: np.ndarray, new_base: np.ndarray) -> np.ndarray:
     n_base = len(old_base) - 1
 
     tetras = np.zeros((n_base, 3, 4))
@@ -29,7 +29,7 @@ def mesh_strut(old_base: np.ndarray, new_base: np.ndarray):
     return tetras.reshape(-1, 4)
 
 
-def orient_tetras(tetras: np.ndarray, points: np.ndarray):
+def orient_tetras(tetras: np.ndarray, points: np.ndarray) -> np.ndarray:
     """
     Reorients the tetrahedra in the given array based on the orientation of their vertices.
 

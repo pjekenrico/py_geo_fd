@@ -12,7 +12,7 @@ from py_geo_fd.wall_adaptation import Adapt_Radius
 from py_geo_fd.stent_config import Stent_Config
 
 
-def numerical_diff(f: Callable, x: float, h: float = 1e-6):
+def numerical_diff(f: Callable, x: float, h: float = 1e-6) -> float:
     """
     Compute the numerical derivative of a function at a given point.
 
@@ -65,7 +65,7 @@ def newton(
     return x
 
 
-def rodrigues_rot(P: np.ndarray, n0: np.ndarray, n1: np.ndarray):
+def rodrigues_rot(P: np.ndarray, n0: np.ndarray, n1: np.ndarray) -> np.ndarray:
     """RODRIGUES ROTATION
     - Rotate given points based on a starting and ending vector
     - Axis k and angle of rotation theta given by vectors n0,n1
@@ -141,7 +141,7 @@ class Stent(object):
         )
         return positions
 
-    def compute_porosity(self, alphas:np.ndarray) -> np.ndarray:
+    def compute_porosity(self, alphas: np.ndarray) -> np.ndarray:
         """
         Compute the porosity of a stent based on the given wire angles.
 
@@ -167,7 +167,7 @@ class Stent(object):
 
         return porosity
 
-    def compute_K(self, r, R):
+    def compute_K(self, r: float, R: float) -> float:
         """
         Compute the winding factor K for a cylindrical stent.
 
@@ -227,7 +227,7 @@ class Stent(object):
 
         return K
 
-    def compute_theta(self, l, th_cly):
+    def compute_theta(self, l: float, th_cly: np.ndarray) -> np.ndarray:
         """
         Compute the angle between the wire and the centerline.
 
@@ -299,7 +299,7 @@ class Stent(object):
 
         return mapped_angle
 
-    def precompute_winding(self, N=300):
+    def precompute_winding(self, N: int = 300) -> None:
         """
         Generate winding factors and wire angles along the stent centerline.
 
@@ -417,7 +417,7 @@ class Stent(object):
 
         return np.squeeze(alphas)
 
-    def save_stent(self, file_path):
+    def save_stent(self, file_path: str) -> None:
         """
         Save the stent mesh to files.
 
@@ -533,7 +533,7 @@ class Stent(object):
         meshio.vtu.write(file_path + ".vtu", mesh, binary=True)
         return
 
-    def save_stent_to_vtp(self, filename: str):
+    def save_stent_to_vtp(self, filename: str) -> None:
         """
         Write centerline data to a VTK PolyData file (.vtp).
 
@@ -632,7 +632,7 @@ class Stent(object):
         )
         return
 
-    def save_centerline(self, file_path: str, N: int = 100):
+    def save_centerline(self, file_path: str, N: int = 100) -> None:
         """
         Save the centerline as a vtp file.
 
@@ -650,3 +650,4 @@ class Stent(object):
         # Postprocessing buffers
         ls = np.linspace(0, self.config.geom.lw, N)
         self.C.output_centerline_info(t=self.t(ls), file_path=file_path)
+        return

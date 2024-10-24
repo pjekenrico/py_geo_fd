@@ -10,7 +10,7 @@ from vtkmodules.util import numpy_support as ns
 from py_geo_fd.stent_config import Stent_Config
 
 
-def normalized(n, axis=None) -> np.ndarray:
+def normalized(n: np.ndarray, axis=None) -> np.ndarray:
     """
     Normalize vector or array of vectors.
 
@@ -78,7 +78,7 @@ def write_centerline_to_vtp(
     points: np.ndarray,
     line_type: Optional[str] = "line",
     data: Optional[dict] = None,
-):
+) -> None:
     """
     Write centerline data to a VTK PolyData file (.vtp).
 
@@ -276,7 +276,7 @@ class CenterLine(object):
         self.mag_R = UnivariateSpline(t, np.linalg.norm(R, axis=1), k=1, ext=3, s=sR)
         return
 
-    def compute_R(self, t) -> list[np.ndarray, np.ndarray]:
+    def compute_R(self, t: float | np.ndarray) -> list[np.ndarray, np.ndarray]:
 
         R = self.x(t, nu=2)
         N = self.x(t, nu=1)
@@ -288,7 +288,7 @@ class CenterLine(object):
         R = np.divide(K, b, where=b != 0, out=np.inf * np.ones_like(K))
         return R
 
-    def length(self, a=0, b=1) -> float:
+    def length(self, a: float = 0.0, b: float = 1.0) -> float:
         def func(t) -> float:
             return np.linalg.norm(self.x(t, nu=1))
 
@@ -297,7 +297,7 @@ class CenterLine(object):
             integ = quad(func, a, b)[0]
         return integ
 
-    def gen_basis(self, t) -> Iterable[np.ndarray]:
+    def gen_basis(self, t: np.ndarray) -> Iterable[np.ndarray]:
 
         def N(t) -> np.ndarray:
             n = self.x(t, nu=1)
@@ -338,7 +338,7 @@ class CenterLine(object):
 
         return n, t1, t2
 
-    def __call__(self, t) -> np.ndarray:
+    def __call__(self, t: float | np.ndarray) -> np.ndarray:
         return self.x(t)
 
     def output_centerline_info(self, t: np.ndarray, file_path: str) -> None:
@@ -354,3 +354,4 @@ class CenterLine(object):
                 "R": self.mag_R(t),
             },
         )
+        return

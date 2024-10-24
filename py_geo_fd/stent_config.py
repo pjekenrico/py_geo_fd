@@ -135,7 +135,7 @@ class Stent_Config(object):
         return
 
 
-def load_config(stent_dict) -> Stent_Config:
+def load_config(stent_dict: str) -> Stent_Config:
     try:
         with open(stent_dict, "r") as f:
             stent_dict = json.load(f)

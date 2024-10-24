@@ -3,26 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Mesh related files
-./*.stl
-*.pvsm
-*.vtk
-*.t
-*.msh
-/TestData/
-/VTUData/
-/TestCase/
-/tests/stent/*.vt?
-*.vt?
-demos
-
-# Custom scripts
-Analysis*
-
-# Custom folders
-/centerlines_aneurysmB/*
-/analysis_PCMRI_data/*
-
 # C extensions
 *.so
 
