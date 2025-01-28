@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Virtual Flow Diverter deployment tool"
 readme = "README.md"
 keywords = ["virtual flow diverter deployment", "intracranial aneurysms"]
-license = {text = "MIT License"}
+license = {text = "GNU General Public License"}
 requires-python = ">=3.9, <4"
 dependencies = [
     "numpy",
@@ -23,3 +23,6 @@ Homepage = "https://github.com/pjekenrico/py_geo_fd"
 [[project.authors]]
 name = "P. Jeken-Rico"
 email = "pablojeken@hotmail.com"
+
+[tool.isort]
+profile = "black"
