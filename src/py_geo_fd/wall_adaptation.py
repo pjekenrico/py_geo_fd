@@ -289,13 +289,9 @@ def distance_wall(
 
     Args:
         t (np.ndarray): Positions of centerline.
-
         C (CenterLine): Centerline object.
-
         th (np.ndarray): Angular positions to search.
-
         max_r (float): Maximal distance to consider for scanning.
-
         triangles (np.ndarray): Array with a structure equivalent to an stl file [n_triangles, n_edges, n_points].
 
     Returns:
@@ -367,6 +363,26 @@ class Adapt_Radius(object):
         return
 
     def __call__(self, t, th) -> np.ndarray[np.float64]:
+        """
+        Evaluate the smooth_r interpolator at given points.
+
+        Parameters:
+        -----------
+        t : float or np.ndarray
+            The first coordinate(s) at which to evaluate the interpolator. Can be a single float or a 2D numpy array.
+        th : np.ndarray
+            The second coordinate(s) at which to evaluate the interpolator. Must be a numpy array.
+
+        Returns:
+        --------
+        np.ndarray[np.float64]
+            The interpolated values at the given points.
+
+        Raises:
+        -------
+        TypeError
+            If `smooth_r` is not an instance of `RectBivariateSpline`.
+        """
         if isinstance(self.smooth_r, RectBivariateSpline):
             if isinstance(th, np.ndarray) and not isinstance(t, np.ndarray):
                 result = self.smooth_r(t, th, grid=False)
@@ -400,7 +416,7 @@ class Adapt_Radius(object):
             th (np.ndarray): Radial vector of values.
             file_path (str): Path to the output file.
             data (dict, optional): Point data to write into the vtu. Defaults to None.
-            dim (int, optional): Dimension of envelope. 2 corresponds to a surface in 3d and 3 corresponds to an envelope of the stents thickness. Defaults to 2.
+            dim (int, optional): Dimension of envelope. 2 corresponds to a surface in 3D and 3 corresponds to an envelope of the stents thickness. Defaults to 2.
         """
 
         if not file_path.endswith(".vtu"):
@@ -439,8 +455,6 @@ class Adapt_Radius(object):
 
             for key in data.keys():
                 data[key] = np.array([data[key], data[key]]).flatten()
-
-            file_path = file_path.replace(".vtu", "_3d.vtu")
 
             write_3d_envelope_to_vtu(file_path, points, data)
 

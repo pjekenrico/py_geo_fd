@@ -582,7 +582,9 @@ class Stent(object):
         writer.Write()
         return
 
-    def save_envelope(self, file_path: str, N: int = 100, Nw: int = 1000) -> None:
+    def save_envelope(
+        self, file_path: str, N: int = 100, Nw: int = 1000, dim: int = 2
+    ) -> None:
         """
         Save the envelope as a vtu file.
 
@@ -590,6 +592,7 @@ class Stent(object):
             file_path (str): The path to save the stent files.
             N (int): The number of points along the stent length for postprocessing.
             Nw (int): The number of points along the stent circumference for postprocessing.
+            dim (int, optional): Dimension of envelope. 2 corresponds to a surface in 3D and 3 corresponds to an envelope of the stents thickness. Defaults to 2.
 
         Returns:
             None
@@ -629,6 +632,7 @@ class Stent(object):
                 "alpha": (180 * alphas / np.pi).reshape(-1),
                 "porosity": porosity.reshape(-1),
             },
+            dim=dim
         )
         return
 
