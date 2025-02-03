@@ -10,6 +10,7 @@ import vtkmodules.util.numpy_support as ns
 
 from py_geo_fd.centerlines import CenterLine
 from py_geo_fd.stent_config import Stent_Config
+from py_geo_fd.stent_meshing import orient_tetras
 
 
 class Timer(object):
@@ -54,17 +55,17 @@ def cylinder_convolve(
     return convolved
 
 
-def read_surface_from_vtp(filename: str) -> list[np.ndarray, np.ndarray]:
+def read_surface_from_vtp(file_path: str) -> list[np.ndarray, np.ndarray]:
     """Read a surface file in the vtp format using the vtk library.
 
     Args:
-        filename (str): Path to vtp file.
+        file_path (str): Path to vtp file.
 
     Returns:
         points, cells (np.ndarray, np.ndarray): Returns point and cell data.
     """
     reader = vtk.vtkXMLPolyDataReader()
-    reader.SetFileName(filename)
+    reader.SetFileName(file_path)
     reader.Update()
     polydata = reader.GetOutput()
 
@@ -81,11 +82,11 @@ def read_surface_from_vtp(filename: str) -> list[np.ndarray, np.ndarray]:
     return points, numpy_cells
 
 
-def write_envelope_to_vtu(filename: str, points: np.ndarray, data=None) -> None:
+def write_envelope_to_vtu(file_path: str, points: np.ndarray, data=None) -> None:
     """Mesh the points of the shape [n_l, n_rad] into a triangular surface that represents a cylindric envelope.
 
     Args:
-        filename (str): Path to outfile (can be stl, vtk, vtu, ...)
+        file_path (str): Path to outfile (can be stl, vtk, vtu, ...)
         points (np.ndarray): points[n_l, n_rad, 3]
         data (np.ndarray, optional): Any point data to add to the file. Defaults to None.
     """
@@ -114,7 +115,106 @@ def write_envelope_to_vtu(filename: str, points: np.ndarray, data=None) -> None:
         points.reshape(-1, 3),
         cells=[("triangle", cells.reshape(-1, 3))],
         point_data=data,
-    ).write(filename)
+    ).write(file_path)
+
+    return
+
+
+def write_3d_envelope_to_vtu(file_path, points: np.ndarray, data: dict = None) -> None:
+    """Generate a 3D envelope from a 2D envelope for the stent.
+
+    Args:
+        file_path (str): Vtu file path.
+        points (np.ndarray): Mesh points with the structure [2, n_l, n_th, 3]. Where the first index is the lower and upper boundary.
+        data (dict, optional): Point data arrays. Defaults to None.
+    """
+
+    n_s, n_th = points.shape[1:3]
+    points = points.reshape(-1, 3)
+    cells = np.zeros((n_s - 1, 5 * n_th, 4), dtype=np.uint)
+    idx = np.arange(2 * n_s * n_th).reshape(2, n_s, -1)
+
+    # Build cells with the structure given by https://www.researchgate.net/publication/221561839
+    # Taking the regular 5-tetra split of a rectangle we get the following indices
+    # 0 1 2 5
+    # 0 2 7 5
+    # 0 2 3 7
+    # 0 5 7 4
+    # 2 7 5 6
+
+    # In our case the nodes of index 0 correspond to
+    # 0 - > idx [0,:-1, :-1]
+    # 1 - > idx [0,:-1, 1:]
+    # 2 - > idx [0, 1:, 1:]
+    # 3 - > idx [0, 1:, :-1]
+    # 4 - > idx [1,:-1, :-1]
+    # 5 - > idx [1,:-1, 1:]
+    # 6 - > idx [1, 1:, 1:]
+    # 7 - > idx [1, 1:, :-1]
+
+    # First tetra - 0 1 2 5
+    cells[:, : n_th - 1, 0] = idx[0, :-1, :-1]
+    cells[:, : n_th - 1, 1] = idx[0, :-1, 1:]
+    cells[:, : n_th - 1, 2] = idx[0, 1:, 1:]
+    cells[:, : n_th - 1, 3] = idx[1, :-1, 1:]
+    # Closing the last loop segment
+    cells[:, n_th - 1, 0] = idx[0, :-1, -1]
+    cells[:, n_th - 1, 1] = idx[0, :-1, 0]
+    cells[:, n_th - 1, 2] = idx[0, 1:, 0]
+    cells[:, n_th - 1, 3] = idx[1, :-1, 0]
+
+    # Second tetra - 0 2 7 5
+    cells[:, n_th : 2 * n_th - 1, 0] = idx[0, :-1, :-1]
+    cells[:, n_th : 2 * n_th - 1, 1] = idx[0, 1:, 1:]
+    cells[:, n_th : 2 * n_th - 1, 2] = idx[1, 1:, :-1]
+    cells[:, n_th : 2 * n_th - 1, 3] = idx[1, :-1, 1:]
+    # Closing the last loop segment
+    cells[:, 2 * n_th - 1, 0] = idx[0, :-1, -1]
+    cells[:, 2 * n_th - 1, 1] = idx[0, 1:, 0]
+    cells[:, 2 * n_th - 1, 2] = idx[1, 1:, -1]
+    cells[:, 2 * n_th - 1, 3] = idx[1, :-1, 0]
+
+    # Third tetra - 0 2 3 7
+    cells[:, 2 * n_th : 3 * n_th - 1, 0] = idx[0, :-1, :-1]
+    cells[:, 2 * n_th : 3 * n_th - 1, 1] = idx[0, 1:, 1:]
+    cells[:, 2 * n_th : 3 * n_th - 1, 2] = idx[0, 1:, :-1]
+    cells[:, 2 * n_th : 3 * n_th - 1, 3] = idx[1, 1:, :-1]
+    # Closing the last loop segment
+    cells[:, 3 * n_th - 1, 0] = idx[0, :-1, -1]
+    cells[:, 3 * n_th - 1, 1] = idx[0, 1:, 0]
+    cells[:, 3 * n_th - 1, 2] = idx[0, 1:, -1]
+    cells[:, 3 * n_th - 1, 3] = idx[1, 1:, -1]
+
+    # Fourth tetra - 0 5 7 4
+    cells[:, 3 * n_th : 4 * n_th - 1, 0] = idx[0, :-1, :-1]
+    cells[:, 3 * n_th : 4 * n_th - 1, 1] = idx[1, :-1, 1:]
+    cells[:, 3 * n_th : 4 * n_th - 1, 2] = idx[1, 1:, :-1]
+    cells[:, 3 * n_th : 4 * n_th - 1, 3] = idx[1, :-1, :-1]
+    # Closing the last loop segment
+    cells[:, 4 * n_th - 1, 0] = idx[0, :-1, -1]
+    cells[:, 4 * n_th - 1, 1] = idx[1, :-1, 0]
+    cells[:, 4 * n_th - 1, 2] = idx[1, 1:, -1]
+    cells[:, 4 * n_th - 1, 3] = idx[1, :-1, -1]
+
+    # Fifth tetra - 2 7 5 6
+    cells[:, 4 * n_th : -1, 0] = idx[0, 1:, 1:]
+    cells[:, 4 * n_th : -1, 1] = idx[1, 1:, :-1]
+    cells[:, 4 * n_th : -1, 2] = idx[1, :-1, 1:]
+    cells[:, 4 * n_th : -1, 3] = idx[1, 1:, 1:]
+    # Closing the last loop segment
+    cells[:, -1, 0] = idx[0, 1:, 0]
+    cells[:, -1, 1] = idx[1, 1:, -1]
+    cells[:, -1, 2] = idx[1, :-1, 0]
+    cells[:, -1, 3] = idx[1, 1:, 0]
+
+    cells = orient_tetras(tetras=cells.reshape(-1, 4), points=points)
+
+    # Write mesh out
+    meshio.Mesh(
+        points=points,
+        cells=[("tetra", cells)],
+        point_data=data,
+    ).write(file_path)
 
     return
 
@@ -215,12 +315,6 @@ def distance_wall(
 class Adapt_Radius(object):
     """
     Fits the radius locally to the vessel surface.
-
-    rad = Adapt_Radius(config: Stent_Config)
-
-    then can be used by stent as:
-
-    stent = Stent(..., radius_adapter=rad)
     """
 
     def __init__(self, config: Stent_Config, C: CenterLine) -> None:
@@ -232,7 +326,7 @@ class Adapt_Radius(object):
         self.trias = mesh.points[mesh.cells_dict["triangle"]]
 
         max_rad = config.st.geom.d_nom * 0.5
-        wire_radius = config.st.geom.wire_radius
+        self.wire_radius = config.st.geom.wire_radius
 
         Nw = self.config.n_radial_segments
         N = self.config.n_axial_segments
@@ -254,9 +348,9 @@ class Adapt_Radius(object):
                 dists = pool.map(get_intersection, t)
 
         dists = np.array(dists)
-        is_far = dists > (max_rad + wire_radius)
+        is_far = dists > (max_rad + self.wire_radius)
         dists[is_far] = max_rad
-        dists -= wire_radius + self.config.margin
+        dists -= self.wire_radius + self.config.margin
 
         if self.config.smoothing > 0:
             smoothings = np.copy(dists)
@@ -314,5 +408,24 @@ class Adapt_Radius(object):
         else:
             data.update({"r": radia.reshape(-1)})
 
+        # Write the fields into a thin envelope file
         write_envelope_to_vtu(file_path, points, data)
+
+        # Write the fields into a 3D envelope file
+        points = np.array(
+            [
+                self.C(t)[:, None, :]
+                + np.einsum("ij,ijk->ijk", radia - self.wire_radius, directions),
+                self.C(t)[:, None, :]
+                + np.einsum("ij,ijk->ijk", radia + self.wire_radius, directions),
+            ]
+        )
+
+        for key in data.keys():
+            data[key] = np.array([data[key], data[key]]).flatten()
+
+        file_path = file_path.replace(".vtu", "_3d.vtu")
+
+        write_3d_envelope_to_vtu(file_path, points, data)
+
         return
