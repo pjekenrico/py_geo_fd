@@ -386,8 +386,22 @@ class Adapt_Radius(object):
         return result
 
     def output_wall(
-        self, t: np.ndarray, th: np.ndarray, file_path: str, data: dict = None
+        self,
+        t: np.ndarray,
+        th: np.ndarray,
+        file_path: str,
+        data: dict = None,
+        dim: int = 2,
     ) -> None:
+        """Write the wall envelope to a vtu file.
+
+        Args:
+            t (np.ndarray): Axial vector of values.
+            th (np.ndarray): Radial vector of values.
+            file_path (str): Path to the output file.
+            data (dict, optional): Point data to write into the vtu. Defaults to None.
+            dim (int, optional): Dimension of envelope. 2 corresponds to a surface in 3d and 3 corresponds to an envelope of the stents thickness. Defaults to 2.
+        """
 
         if not file_path.endswith(".vtu"):
             file_path += ".vtu"
@@ -407,25 +421,27 @@ class Adapt_Radius(object):
             data = {"r": radia.reshape(-1)}
         else:
             data.update({"r": radia.reshape(-1)})
+            
+        if dim == 2:
+            # Write the fields into a thin envelope file
+            write_envelope_to_vtu(file_path, points, data)
+            return
+        elif dim == 3:
+            # Write the fields into a 3D envelope file
+            points = np.array(
+                [
+                    self.C(t)[:, None, :]
+                    + np.einsum("ij,ijk->ijk", radia - self.wire_radius, directions),
+                    self.C(t)[:, None, :]
+                    + np.einsum("ij,ijk->ijk", radia + self.wire_radius, directions),
+                ]
+            )
 
-        # Write the fields into a thin envelope file
-        write_envelope_to_vtu(file_path, points, data)
+            for key in data.keys():
+                data[key] = np.array([data[key], data[key]]).flatten()
 
-        # Write the fields into a 3D envelope file
-        points = np.array(
-            [
-                self.C(t)[:, None, :]
-                + np.einsum("ij,ijk->ijk", radia - self.wire_radius, directions),
-                self.C(t)[:, None, :]
-                + np.einsum("ij,ijk->ijk", radia + self.wire_radius, directions),
-            ]
-        )
+            file_path = file_path.replace(".vtu", "_3d.vtu")
 
-        for key in data.keys():
-            data[key] = np.array([data[key], data[key]]).flatten()
+            write_3d_envelope_to_vtu(file_path, points, data)
 
-        file_path = file_path.replace(".vtu", "_3d.vtu")
-
-        write_3d_envelope_to_vtu(file_path, points, data)
-
-        return
+            return
