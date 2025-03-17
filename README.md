@@ -17,3 +17,6 @@ from py_geo_fd import Stent
 ```
 
 The class is constructed with a `json` file containing the required parameters for all of the involved model parameters. 
+![Logo](https://cure-erc.github.io/imgs/LOGO-ERC.jpg)
+
+![Logo](https://cure-erc.github.io/imgs/CURE_LOGO.png)
