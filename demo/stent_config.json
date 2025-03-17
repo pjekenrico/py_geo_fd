@@ -1,6 +1,6 @@
 {
   "centerline_params": {
-    "centerline_path": "demo/centerline.mrk.json",
+    "centerline_path": "centerline.mrk.json",
     "x_smoothing": 0.01,
     "dx_smoothing": 0.001,
     "s_start": 1
@@ -19,7 +19,7 @@
     }
   },
   "wall_params": {
-    "wall_path": "demo/surface.stl",
+    "wall_path": "surface.stl",
     "smoothing": 30,
     "margin": 0.0,
     "n_axial_segments": 128,

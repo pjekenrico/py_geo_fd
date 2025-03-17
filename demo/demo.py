@@ -5,7 +5,7 @@
 
     {
         "centerline_params": {
-            "centerline_path": "demo/centerline.mrk.json", - Path to centerline. Can be vtp of .mrk.json (3DSlicer)
+            "centerline_path": "centerline.mrk.json", - Path to centerline. Can be vtp of .mrk.json (3DSlicer)
             "x_smoothing": 0.01, - Smoothing of the centerline curve.
             "dx_smoothing": 0.001, - Smoothing of derivative curve.
             "s_start": 1 - Starting position of the stent (depends on the direction of the centerline!).
@@ -24,7 +24,7 @@
             }
         },
         "wall_params": {
-            "wall_path": "demo/surface.stl", - Path to aneurysm stl (or any other format supported by meshio with triangles).
+            "wall_path": "surface.stl", - Path to aneurysm stl (or any other format supported by meshio with triangles).
             "smoothing": 30, - Number of gaußian smoothing steps of the wall surface.
             "margin": 0.0, - Margin, in case you need to shrink the wall surface (e.g. for a stent in a stent).
             "n_axial_segments": 128, - Axial resolution of the wall distance computation.
@@ -37,17 +37,17 @@
 from py_geo_fd import Stent
 
 # Build stent using the config file
-stent = Stent("demo/stent_config.json")
+stent = Stent("stent_config.json")
 
 # Save the centerline after smoothing. This helps bebugging code and checking that the smoothing is not too large/small.
-stent.save_centerline("demo/centerline.vtp")
+stent.save_centerline("centerline.vtp")
 
 # Save the stent envelope including the local porosity and wire angles.
-stent.save_envelope("demo/stent_envelope")
+stent.save_envelope("stent_envelope")
 
 # Save the stent as a collection of 1D lines as vtp (ideal for embedding)
-stent.save_stent_to_vtp("demo/stent.vtp")
+stent.save_stent_to_vtp("stent.vtp")
 
 # Save the stent as a tetrahaedra mesh (ideal for visualization). It will output sets of positive and negative winding wires for potential embedding.
 # The outputs are in the vtu format. No need to specifying that in the path.
-stent.save_stent("demo/stent")
+stent.save_stent("stent")
