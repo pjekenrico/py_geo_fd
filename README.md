@@ -16,7 +16,9 @@ Once properly installed as described above, you can import the `Stent` class:
 from py_geo_fd import Stent
 ```
 
-The class is constructed with a `json` file containing the required parameters for all of the involved model parameters. 
-![Logo](https://cure-erc.github.io/imgs/LOGO-ERC.jpg)
+The class is constructed with a `json` file containing the required parameters for all of the involved model parameters.
 
-![Logo](https://cure-erc.github.io/imgs/CURE_LOGO.png)
+<p align="center">
+  <img src="https://cure-erc.github.io/imgs/LOGO-ERC.jpg" alt="Logo ERC" width="200">
+  <img src="https://cure-erc.github.io/imgs/CURE_LOGO.png" alt="CURE Logo" width="200">
+</p>
