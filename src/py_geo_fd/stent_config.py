@@ -119,6 +119,8 @@ class wall(object):
 
 
 class Stent_Config(object):
+    """Class to bundle all of the parameters used for the stent generation. Examples for the json file to fill the parameters are given in the demo folder."""
+
     def __init__(
         self,
         centerline_params,

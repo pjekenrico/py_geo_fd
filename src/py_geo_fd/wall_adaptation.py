@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from pathlib import Path
 
 import numpy as np
 from functools import partial
@@ -14,7 +14,7 @@ from py_geo_fd.stent_meshing import orient_tetras
 
 
 class Timer(object):
-    def __init__(self, name: Optional[str] = None):
+    def __init__(self, name: str = None):
         self.name = name
 
     def __enter__(self):
@@ -24,7 +24,7 @@ class Timer(object):
         name = ""
         if self.name:
             name = "%s - " % self.name
-        print(name + "Elapsed: %s" % (time.time() - self.tstart))
+        print(name + "Elapsed: %.3f s" % (time.time() - self.tstart))
 
 
 def cylinder_convolve(
@@ -55,7 +55,7 @@ def cylinder_convolve(
     return convolved
 
 
-def read_surface_from_vtp(file_path: str) -> list[np.ndarray, np.ndarray]:
+def read_surface_from_vtp(file_path: str | Path) -> list[np.ndarray, np.ndarray]:
     """Read a surface file in the vtp format using the vtk library.
 
     Args:
@@ -82,7 +82,7 @@ def read_surface_from_vtp(file_path: str) -> list[np.ndarray, np.ndarray]:
     return points, numpy_cells
 
 
-def write_envelope_to_vtu(file_path: str, points: np.ndarray, data=None) -> None:
+def write_envelope_to_vtu(file_path: str | Path, points: np.ndarray, data=None) -> None:
     """Mesh the points of the shape [n_l, n_rad] into a triangular surface that represents a cylindric envelope.
 
     Args:
@@ -405,7 +405,7 @@ class Adapt_Radius(object):
         self,
         t: np.ndarray,
         th: np.ndarray,
-        file_path: str,
+        file_path: str | Path,
         data: dict = None,
         dim: int = 2,
     ) -> None:

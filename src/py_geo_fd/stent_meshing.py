@@ -1,12 +1,17 @@
 from __future__ import annotations
-
 import numpy as np
-
-def compare_tuple(tuple_a, tuple_b) -> bool:
-    return np.all((np.array(tuple_a) == np.array(tuple_b)))
 
 
 def mesh_strut(old_base: np.ndarray, new_base: np.ndarray) -> np.ndarray:
+    """Generates elements between two sets of points that represent two wire cross-sections.
+
+    Args:
+        old_base (np.ndarray): Left point collection composed of indices.
+        new_base (np.ndarray): Right point collection composed of indices.
+
+    Returns:
+        np.ndarray: Connectivity array of the generated elements.
+    """
     n_base = len(old_base) - 1
 
     tetras = np.zeros((n_base, 3, 4))
@@ -51,5 +56,5 @@ def orient_tetras(tetras: np.ndarray, points: np.ndarray) -> np.ndarray:
     bad_tetra[:, [0, 1]] = bad_tetra[:, [1, 0]]
     tetras[mask] = bad_tetra.astype(int)
 
-    assert compare_tuple(tetras.shape, init_shape)
+    assert np.all((np.array(tetras.shape) == np.array(init_shape)))
     return tetras

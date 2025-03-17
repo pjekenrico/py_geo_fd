@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Callable
+from pathlib import Path
 
 import meshio, vtk
 import numpy as np
@@ -8,8 +9,8 @@ from scipy.interpolate import UnivariateSpline, CubicSpline, RectBivariateSpline
 
 from py_geo_fd.centerlines import CenterLine, normalized
 from py_geo_fd.stent_meshing import mesh_strut, orient_tetras
-from py_geo_fd.wall_adaptation import Adapt_Radius
-from py_geo_fd.stent_config import Stent_Config
+from py_geo_fd.wall_adaptation import Adapt_Radius, Timer
+from py_geo_fd.stent_config import load_config
 
 
 def numerical_diff(f: Callable, x: float, h: float = 1e-6) -> float:
@@ -33,14 +34,14 @@ def newton(
     f: Callable,
     df: Callable,
     x0: float,
-    tol: float = 1e-6,
-    maxiter: int = 100,
+    tol: float = 1e-5,
+    maxiter: int = 1000,
     w: float = 1.0,
 ) -> float:
     """
     Implement Newton's method for finding the root of a function.
 
-    Args:
+    Parameters:
         f (function): The function for which the root is to be found.
         df (function): The derivative of the function.
         x0 (float): The initial guess for the root.
@@ -59,10 +60,9 @@ def newton(
             return x
         x0 = x
     print(
-        f"Warning: Newtons method did not converge with:\n\t|f(x)| = {np.abs(f(x0))}\n\t|f(x)/df(x)| = {np.abs(err)}"
+        f"Warning: Newtons method did not converge with:\n\t|f(x)| = {np.abs(f(x0))}\n\t|f(x)/df(x)| = {np.abs(err)}\n Returning np.nan."
     )
-
-    return x
+    return np.nan
 
 
 def rodrigues_rot(P: np.ndarray, n0: np.ndarray, n1: np.ndarray) -> np.ndarray:
@@ -100,23 +100,40 @@ def rodrigues_rot(P: np.ndarray, n0: np.ndarray, n1: np.ndarray) -> np.ndarray:
 
 class Stent(object):
     """
-    stent = Stent(config)
-    stent.save_stent("stent")
+    Class for generating a stent mesh based on a given configuration.
+
+    Parameters:
+        config (str | Path): The configuration object or the path to the json configuration file.
+
+    Methods:
+        save_stent: Save the stent mesh to files.
+        save_stent_to_vtp: Write centerline data to a VTK PolyData file (.vtp).
+        save_envelope: Save the envelope as a vtu file.
+        save_centerline: Save the centerline as a vtp file.
+
     """
 
-    def __init__(self, config: Stent_Config) -> None:
+    def __init__(self, config_file: str | Path) -> None:
+
+        config = load_config(config_file)
+
         # Stent centerline params
         self.C = CenterLine(config)
 
+        # Number cpu cores to use to compute the centerline - vessel distances
         self.n_cpu = config.n_cpu  # Number of CPUs
 
         # Wall distance (that fits the radius of the vessel)
         self.adapt = Adapt_Radius(config, self.C)  # r(t, th)
 
+        # Stent configuration
         self.config = config.st
 
-        # self.precompute_winding()
-        self.precompute_winding()
+        # t = np.linspace(2, 9, 20)
+        # self.C.output_centerline_info(t=t, file_path="demo/centerline.vtp")
+
+        with Timer("Computed discrete winding information"):
+            self.precompute_winding()
 
         return
 
@@ -199,7 +216,7 @@ class Stent(object):
 
         # If the major radius is much larger than the wire radius,
         # return the winding factor for a cylindrical stent
-        if R > 10 * r:
+        if R > 20 * r:
             return K_cyl_local
 
         # Under-relaxation factor for newtons method based on observations
@@ -267,6 +284,11 @@ class Stent(object):
             def K_comp(x):
                 # Compute angular offset to have the correct local winding
                 v = t1 * np.cos(x) + t2 * np.sin(x)
+
+                if (1 + r / R * np.dot(v, vec_R)) / K > 1:
+                    print(
+                        "Warning: Computation of winding factor K did not converge. Using cylindric winding factor: {K_cyl_local}. Make sure to properly smooth the centerline, to ensure a smooth enough curve for numerical root finding."
+                    )
                 return np.sqrt(1 - ((1 + r / R * np.dot(v, vec_R)) / K) ** 2)
 
             return quad(K_comp, 0, th)[0]
@@ -276,8 +298,11 @@ class Stent(object):
                 lambda th: th_c * r / re - integ(th),
                 lambda th: -np.sqrt(1 - ((1 + r / R * np.cos(th)) / K) ** 2),
                 x0=th_c,
-                w=1,
+                w=0.75,
             )
+            if np.isnan(th_new[k]):
+                print("Applying cylindric winding on nearly straight segment.")
+                return th_cly
 
         if th_cly[-1] == 2 * np.pi:
             vals = th_new - th_cly
@@ -299,7 +324,7 @@ class Stent(object):
 
         return mapped_angle
 
-    def precompute_winding(self, N: int = 300) -> None:
+    def precompute_winding(self, N: int = 200) -> None:
         """
         Generate winding factors and wire angles along the stent centerline.
 
@@ -354,7 +379,7 @@ class Stent(object):
             # Increase centerline position
             t += dl / Ks[k]
 
-        print("\nEffective stent length : ", t - self.C.s_start)
+        print("Effective stent length : ", round(t - self.C.s_start, 2), "mm")
         ts[-1] = t
         self.t = UnivariateSpline(ls, ts, s=0, k=2, ext=0)
         self.K = UnivariateSpline(ls[:-1], Ks, s=0, k=2, ext=3)
@@ -380,7 +405,7 @@ class Stent(object):
     ) -> np.ndarray:
         """Compute the angles between wires for the deployed stent after radius adjustment.
 
-        Args:
+        Parameters:
             pts (np.ndarray): Discrete wire points in the shape [Nw, N, 3]
             ctrl_pts (np.ndarray): Discrete centerline points in the shape [N, 3]
 
@@ -417,11 +442,11 @@ class Stent(object):
 
         return np.squeeze(alphas)
 
-    def save_stent(self, file_path: str) -> None:
+    def save_stent(self, file_path: str | Path) -> None:
         """
         Save the stent mesh to files.
 
-        Args:
+        Parameters:
             file_path (str): The path to save the stent files.
 
         Returns:
@@ -533,11 +558,11 @@ class Stent(object):
         meshio.vtu.write(file_path + ".vtu", mesh, binary=True)
         return
 
-    def save_stent_to_vtp(self, filename: str) -> None:
+    def save_stent_to_vtp(self, filename: str | Path) -> None:
         """
         Write centerline data to a VTK PolyData file (.vtp).
 
-        Args:
+        Parameters:
             filename (str): The path and filename of the output VTP file.
 
         Returns:
@@ -583,12 +608,12 @@ class Stent(object):
         return
 
     def save_envelope(
-        self, file_path: str, N: int = 100, Nw: int = 1000, dim: int = 2
+        self, file_path: str | Path, N: int = 100, Nw: int = 100, dim: int = 2
     ) -> None:
         """
         Save the envelope as a vtu file.
 
-        Args:
+        Parameters:
             file_path (str): The path to save the stent files.
             N (int): The number of points along the stent length for postprocessing.
             Nw (int): The number of points along the stent circumference for postprocessing.
@@ -632,15 +657,15 @@ class Stent(object):
                 "alpha": (180 * alphas / np.pi).reshape(-1),
                 "porosity": porosity.reshape(-1),
             },
-            dim=dim
+            dim=dim,
         )
         return
 
-    def save_centerline(self, file_path: str, N: int = 100) -> None:
+    def save_centerline(self, file_path: str | Path, N: int = 50) -> None:
         """
         Save the centerline as a vtp file.
 
-        Args:
+        Parameters:
             file_path (str): The path to save the stent files.
             N (int): The number of points along the stent length for postprocessing.
 

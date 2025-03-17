@@ -1,0 +1,29 @@
+{
+  "centerline_params": {
+    "centerline_path": "demo/centerline.mrk.json",
+    "x_smoothing": 0.01,
+    "dx_smoothing": 0.001,
+    "s_start": 1
+  },
+  "stent_params": {
+    "geo_params": {
+      "w": 0.17,
+      "lw": 13,
+      "d_nom": 2.5,
+      "Nw": 52,
+      "wire_radius": 0.015
+    },
+    "numeric_params": {
+      "wire_resolution": 20,
+      "n_segments": 200
+    }
+  },
+  "wall_params": {
+    "wall_path": "demo/surface.stl",
+    "smoothing": 30,
+    "margin": 0.0,
+    "n_axial_segments": 128,
+    "n_radial_segments": 72
+  },
+  "n_cpu": 14
+}

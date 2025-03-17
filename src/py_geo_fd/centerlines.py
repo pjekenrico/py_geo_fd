@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Optional, Iterable, Union
+from typing import Optional, Iterable
+from pathlib import Path
 
 import warnings, json, vtk
 import numpy as np
@@ -32,7 +33,7 @@ def normalized(n: np.ndarray, axis=None) -> np.ndarray:
 
 
 def read_centerline_from_vtp(
-    filename: str, flip: bool = False
+    filename: str | Path, flip: bool = False
 ) -> tuple[np.ndarray, Optional[np.ndarray]]:
     """
     Read centerline data from a VTP file.
@@ -74,7 +75,7 @@ def read_centerline_from_vtp(
 
 
 def write_centerline_to_vtp(
-    filename: str,
+    filename: str | Path,
     points: np.ndarray,
     line_type: Optional[str] = "line",
     data: Optional[dict] = None,
@@ -197,12 +198,12 @@ class Curve(object):
         self.y = UnivariateSpline(t, y, *args, **kwargs)
         self.z = UnivariateSpline(t, z, *args, **kwargs)
 
-    def __call__(self, t: Union[float, np.ndarray], nu=0) -> np.ndarray:
+    def __call__(self, t: float | np.ndarray, nu=0) -> np.ndarray:
         """
         Evaluate the curve at given parameter value(s) t.
 
         Parameters:
-        t (Union[float, np.ndarray]): Parameter value(s) at which to evaluate the curve.
+        t (float | np.ndarray): Parameter value(s) at which to evaluate the curve.
 
         Returns:
         np.ndarray: Array of shape (3,) if t is a single value or (len(t), 3) if t is an array,
@@ -217,28 +218,10 @@ class Curve(object):
 
 
 class CenterLine(object):
-    """
-    Provide information about a centerline that you obtain e.g. by reading a json
-    from 3DSlicer
+    """Class to handle the vessel centerline. It is called internally by the Stent class.
 
-        def read_vmtk_centerline(*files: tuple):
-
-        centerpoints = list()
-        radius = list()
-
-        for file in files:
-            with open(file, "r") as f:
-                data = json.loads(f.read())
-                data = data["markups"][0]
-
-            centerpoints.append(np.array([d["position"]
-                                for d in data["controlPoints"]]).T)
-
-            rad = data["measurements"][-1]
-            assert ("radius" == rad['name'].lower())
-            radius.append(np.array(rad["controlPointValues"]))
-
-        return np.concatenate(centerpoints, axis=1), np.concatenate(radius)
+    Args:
+        object (Stent_Config): Stent configuration dictionary.
     """
 
     def __init__(self, config: Stent_Config) -> None:
@@ -256,9 +239,9 @@ class CenterLine(object):
         sR = config.ctrl.dx_s
 
         t = np.linspace(0, 1, len(x))
-        self.x = Curve(t, x, y, z, k=4, s=s)
+        self.x = Curve(t, x, y, z, k=3, s=s)
         t = np.array([self.length(0, l) for l in t])
-        self.x = Curve(t, x, y, z, k=4, s=s)
+        self.x = Curve(t, x, y, z, k=3, s=s)
 
         self.s_end = t[-1]
         self.s_start = config.ctrl.s_start
@@ -276,7 +259,15 @@ class CenterLine(object):
         self.mag_R = UnivariateSpline(t, np.linalg.norm(R, axis=1), k=1, ext=3, s=sR)
         return
 
-    def compute_R(self, t: float | np.ndarray) -> list[np.ndarray, np.ndarray]:
+    def compute_R(self, t: np.ndarray) -> np.ndarray:
+        """Compute major radius of the curve.
+
+        Args:
+            t (np.ndarray): Curve parameter.
+
+        Returns:
+            np.ndarray: _description_
+        """
 
         R = self.x(t, nu=2)
         N = self.x(t, nu=1)
@@ -298,6 +289,14 @@ class CenterLine(object):
         return integ
 
     def gen_basis(self, t: np.ndarray) -> Iterable[np.ndarray]:
+        """Compute basis along the centerline.
+
+        Args:
+            t (np.ndarray): Curve paramter as a vector.
+
+        Returns:
+            Iterable[np.ndarray]: Arrays of basis vectors for each t [n,t1,t2].
+        """
 
         def N(t) -> np.ndarray:
             n = self.x(t, nu=1)
@@ -339,9 +338,17 @@ class CenterLine(object):
         return n, t1, t2
 
     def __call__(self, t: float | np.ndarray) -> np.ndarray:
+        """Evaluate centerline position.
+
+        Args:
+            t (float | np.ndarray): Curve parameter.
+
+        Returns:
+            np.ndarray: Centerline positions.
+        """
         return self.x(t)
 
-    def output_centerline_info(self, t: np.ndarray, file_path: str) -> None:
+    def output_centerline_info(self, t: np.ndarray, file_path: str | Path) -> None:
         write_centerline_to_vtp(
             file_path,
             self(t),
