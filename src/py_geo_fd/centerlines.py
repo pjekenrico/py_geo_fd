@@ -47,6 +47,8 @@ def read_centerline_from_vtp(
     - radius (ndarray or None): The radius values of the centerline points, or None if not available.
     """
 
+    filename = str(filename)
+
     if filename.endswith(".vtp"):
         reader = vtk.vtkXMLPolyDataReader()
         reader.SetFileName(filename)
@@ -59,6 +61,8 @@ def read_centerline_from_vtp(
         reader = vtk.vtkXMLUnstructuredGridReader()
         reader.SetFileName(filename)
         reader.Update()
+    else:
+        raise ValueError(f"Unsupported centerline format: {filename}")
     polydata = reader.GetOutput()
     points = ns.vtk_to_numpy(polydata.GetPoints().GetData())
 
@@ -69,7 +73,8 @@ def read_centerline_from_vtp(
 
     if flip:
         points = np.flip(points, axis=0)
-        radius = np.flip(radius)
+        if radius is not None:
+            radius = np.flip(radius)
 
     return points, radius
 

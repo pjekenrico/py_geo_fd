@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,10 +11,17 @@ keywords = ["virtual flow diverter deployment", "intracranial aneurysms"]
 license = {text = "GNU General Public License"}
 requires-python = ">=3.9, <4"
 dependencies = [
-    "numpy",
-    "scipy",
-    "vtk",
-    "meshio"
+    "numpy>=1.23",
+    "scipy>=1.10",
+    "vtk>=9.2",
+    "meshio>=5.3"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5"
 ]
 
 [project.urls]
@@ -26,3 +33,18 @@ email = "pablojeken@hotmail.com"
 
 [tool.isort]
 profile = "black"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+py_geo_fd = ["stent_data.json"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

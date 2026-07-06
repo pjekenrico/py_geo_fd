@@ -178,8 +178,9 @@ class Stent(object):
         porosity = (1 - 2 * dw / w / np.sin(2 * alphas)) ** 2
 
         # Invalid porosities outside the angle range
-        invalid_porosities = alphas > (np.pi - np.arcsin(dw / w)) / 2
-        invalid_porosities &= alphas < np.arcsin(dw / w) / 2
+        alpha_min = np.arcsin(dw / w) / 2
+        alpha_max = (np.pi - np.arcsin(dw / w)) / 2
+        invalid_porosities = (alphas < alpha_min) | (alphas > alpha_max)
         porosity[invalid_porosities] = np.nan
 
         return porosity

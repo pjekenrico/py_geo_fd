@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import numpy as np
 
 
@@ -137,26 +138,31 @@ class Stent_Config(object):
         return
 
 
-def load_config(stent_dict: str) -> Stent_Config:
+def load_config(stent_dict: str | Path) -> Stent_Config:
     try:
         with open(stent_dict, "r") as f:
             stent_dict = json.load(f)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Config file not found: {stent_dict}") from exc
     except json.JSONDecodeError:
-        print(f"Error: The provided file {stent_dict} is", "not a valid JSON document.")
-        exit(1)
+        raise ValueError(f"The provided file {stent_dict} is not a valid JSON document.")
 
     return Stent_Config(**stent_dict)
 
 
-def compute_w_lw():
-    path = "/".join(__file__.split("/")[:-1]) + "/stent_data.json"
+def compute_w_lw(path: str | Path | None = None) -> None:
+    if path is None:
+        path = Path(__file__).with_name("stent_data.json")
+    else:
+        path = Path(path)
 
     try:
         with open(path, "r") as f:
             stent_dict = json.load(f)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Stent data file not found: {path}") from exc
     except json.JSONDecodeError:
-        print(f"Error: The stent data file is", "not found.")
-        exit(1)
+        raise ValueError(f"The stent data file {path} is not a valid JSON document.")
 
     for stent in stent_dict.keys():
         stent_data = stent_dict[stent]
@@ -178,6 +184,3 @@ def compute_w_lw():
     with open(path, "w") as f:
         json.dump(stent_dict, f, cls=CompactJSONEncoder, indent=2)
         f.write("\n")
-
-
-compute_w_lw()
