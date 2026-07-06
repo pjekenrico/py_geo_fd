@@ -1,16 +1,67 @@
 from __future__ import annotations
 from typing import Callable
 from pathlib import Path
+import sys
+import time
 
 import meshio, vtk
 import numpy as np
-from scipy.integrate import quad
+from scipy.integrate import quad, cumulative_trapezoid
 from scipy.interpolate import UnivariateSpline, CubicSpline, RectBivariateSpline
 
 from py_geo_fd.centerlines import CenterLine, normalized
 from py_geo_fd.stent_meshing import mesh_strut, orient_tetras
-from py_geo_fd.wall_adaptation import Adapt_Radius, Timer
+from py_geo_fd.wall_adaptation import Adapt_Radius
 from py_geo_fd.stent_config import load_config
+
+
+class ProgressBar(object):
+    """Simple terminal progress bar for long-running loops."""
+
+    def __init__(
+        self,
+        total: int,
+        label: str,
+        width: int = 28,
+        min_interval: float = 0.25,
+        enabled: bool | None = None,
+    ) -> None:
+        self.total = max(int(total), 1)
+        self.label = label
+        self.width = width
+        self.min_interval = min_interval
+        self.enabled = sys.stdout.isatty() if enabled is None else enabled
+        self.start = time.perf_counter()
+        self.last_update = 0.0
+
+        if self.enabled:
+            self._draw(0)
+
+    def _draw(self, done: int) -> None:
+        done = max(0, min(done, self.total))
+        ratio = done / self.total
+        filled = int(self.width * ratio)
+        bar = "#" * filled + "-" * (self.width - filled)
+        elapsed = time.perf_counter() - self.start
+        msg = (
+            f"\r{self.label}: [{bar}] {100.0 * ratio:6.2f}% "
+            f"({done}/{self.total})  {elapsed:6.1f}s"
+        )
+        print(msg, end="", flush=True)
+
+    def update(self, done: int, force: bool = False) -> None:
+        if not self.enabled:
+            return
+        now = time.perf_counter()
+        if force or done >= self.total or (now - self.last_update) >= self.min_interval:
+            self._draw(done)
+            self.last_update = now
+
+    def close(self) -> None:
+        if not self.enabled:
+            return
+        self._draw(self.total)
+        print(flush=True)
 
 
 def numerical_diff(f: Callable, x: float, h: float = 1e-6) -> float:
@@ -132,8 +183,7 @@ class Stent(object):
         # t = np.linspace(2, 9, 20)
         # self.C.output_centerline_info(t=t, file_path="demo/centerline.vtp")
 
-        with Timer("Computed discrete winding information"):
-            self.precompute_winding()
+        self.precompute_winding()
 
         return
 
@@ -267,6 +317,8 @@ class Stent(object):
         t1 = self.C.t1(t)
         t2 = self.C.t2(t)
         vec_R = normalized(self.C.R(t))
+        vec_R_dot_t1 = float(np.dot(t1, vec_R))
+        vec_R_dot_t2 = float(np.dot(t2, vec_R))
 
         # Wire distance
         w = self.config.geom.w
@@ -279,25 +331,36 @@ class Stent(object):
 
         # (capped) Radius of the stent
         r = np.min((self.config.geom.d_nom / 2, r))
+        curvature_ratio = r / R
 
-        # Define the function to integrate
+        def k_comp(th):
+            th = np.asarray(th)
+            term = vec_R_dot_t1 * np.cos(th) + vec_R_dot_t2 * np.sin(th)
+            local = (1 + curvature_ratio * term) / K
+
+            # Clamp small numerical overshoots that can otherwise break sqrt.
+            local = np.clip(local, -1.0, 1.0)
+            return np.sqrt(np.clip(1 - local**2, 0.0, None))
+
+        # Precompute cumulative integrals once per axial position to avoid
+        # repeatedly calling adaptive quadrature in Newton's iterations.
+        n_int = max(512, 8 * len(th_cly))
+        th_grid = np.linspace(0.0, 2 * np.pi, n_int)
+        k_grid = k_comp(th_grid)
+        integ_grid = cumulative_trapezoid(k_grid, th_grid, initial=0.0)
+        period = 2 * np.pi
+        period_integral = float(integ_grid[-1])
+
         def integ(th):
-            def K_comp(x):
-                # Compute angular offset to have the correct local winding
-                v = t1 * np.cos(x) + t2 * np.sin(x)
-
-                if (1 + r / R * np.dot(v, vec_R)) / K > 1:
-                    print(
-                        "Warning: Computation of winding factor K did not converge. Using cylindric winding factor: {K_cyl_local}. Make sure to properly smooth the centerline, to ensure a smooth enough curve for numerical root finding."
-                    )
-                return np.sqrt(1 - ((1 + r / R * np.dot(v, vec_R)) / K) ** 2)
-
-            return quad(K_comp, 0, th)[0]
+            th = float(th)
+            n_periods = np.floor(th / period)
+            th_mod = th - n_periods * period
+            return n_periods * period_integral + np.interp(th_mod, th_grid, integ_grid)
 
         for k, th_c in enumerate(th_cly):
             th_new[k] = newton(
                 lambda th: th_c * r / re - integ(th),
-                lambda th: -np.sqrt(1 - ((1 + r / R * np.cos(th)) / K) ** 2),
+                lambda th: -max(float(k_comp(th)), 1e-12),
                 x0=th_c,
                 w=0.75,
             )
@@ -368,6 +431,8 @@ class Stent(object):
         dirs = np.ones(Nw // 2)
         dirs = np.array([dirs, -dirs]).flatten()
 
+        prog_k = ProgressBar(N, "Precompute winding K")
+
         for k in range(N):
             # Get radius and major radius
             r = self.C.r(t)
@@ -379,14 +444,22 @@ class Stent(object):
 
             # Increase centerline position
             t += dl / Ks[k]
+            prog_k.update(k + 1)
 
-        print("Effective stent length : ", round(t - self.C.s_start, 2), "mm")
+        prog_k.close()
+
+        self.effective_length = t - self.C.s_start
         ts[-1] = t
         self.t = UnivariateSpline(ls, ts, s=0, k=2, ext=0)
         self.K = UnivariateSpline(ls[:-1], Ks, s=0, k=2, ext=3)
 
         # Compute the winding angles
-        new_th = np.array([self.compute_theta(l, th_cyl) for l in ls[:-1]])
+        new_th = np.zeros((N, len(th_cyl)))
+        prog_th = ProgressBar(N, "Precompute winding angles")
+        for i, l in enumerate(ls[:-1]):
+            new_th[i] = self.compute_theta(l, th_cyl)
+            prog_th.update(i + 1)
+        prog_th.close()
         self.new_th = RectBivariateSpline(ls[:-1], th_cyl, new_th, kx=2, ky=2, s=0)
 
         # Get structured angles
@@ -399,7 +472,93 @@ class Stent(object):
             UnivariateSpline(ls[:-1], np.unwrap(th), s=0, k=2, ext=0) for th in thetas
         ]
 
+        self._print_geometry_summary()
+
         return
+
+    def _print_geometry_summary(
+        self,
+        n_axial: int = 120,
+        n_radial: int = 120,
+    ) -> None:
+        """Print deployment summary with key geometric metrics."""
+
+        ls = np.linspace(0, self.config.geom.lw, n_axial)
+        t = self.t(ls)
+        th = np.linspace(0, 2 * np.pi, n_radial, endpoint=False)
+
+        R = self.C.mag_R(t)[:, None]
+        vec_R = normalized(self.C.R(t), axis=-1)
+        r = self.adapt(t, th)
+        K = self.K(ls)[:, None]
+
+        v = np.einsum("ik,j->ijk", self.C.t1(t), np.cos(th))
+        v += np.einsum("ik,j->ijk", self.C.t2(t), np.sin(th))
+        term = np.einsum("ijk,ik->ij", v, vec_R)
+
+        alpha_term = np.sqrt(np.clip(K**2 - (1 - r / R * term) ** 2, 0.0, None)) / K
+        alpha_term = np.clip(alpha_term, -1.0, 1.0)
+        alphas = np.arcsin(alpha_term)
+        porosity = self.compute_porosity(alphas)
+
+        diam = 2.0 * r
+        alpha_deg = np.rad2deg(alphas)
+        metal_coverage = 1.0 - porosity
+
+        finite_diam = np.isfinite(diam)
+        finite_alpha = np.isfinite(alpha_deg)
+        finite_porosity = np.isfinite(porosity)
+        finite_coverage = np.isfinite(metal_coverage)
+
+        print("\nStent deployment summary")
+        print(f"  Effective stent length [mm]: {self.effective_length:.2f}")
+
+        if np.any(finite_diam):
+            print(
+                "  Adapted diameter [mm]: "
+                f"min {np.min(diam[finite_diam]):.3f}, "
+                f"max {np.max(diam[finite_diam]):.3f}, "
+                f"mean {np.mean(diam[finite_diam]):.3f}"
+            )
+
+        if np.any(finite_alpha):
+            print(
+                "  Wire angle alpha [deg]: "
+                f"min {np.min(alpha_deg[finite_alpha]):.2f}, "
+                f"max {np.max(alpha_deg[finite_alpha]):.2f}, "
+                f"mean {np.mean(alpha_deg[finite_alpha]):.2f}"
+            )
+
+        if np.any(finite_porosity):
+            print(
+                "  Porosity [-]: "
+                f"min {np.min(porosity[finite_porosity]):.4f}, "
+                f"max {np.max(porosity[finite_porosity]):.4f}, "
+                f"mean {np.mean(porosity[finite_porosity]):.4f}"
+            )
+
+        if np.any(finite_coverage):
+            print(
+                "  Metal coverage [-]: "
+                f"min {np.min(metal_coverage[finite_coverage]):.4f}, "
+                f"max {np.max(metal_coverage[finite_coverage]):.4f}, "
+                f"mean {np.mean(metal_coverage[finite_coverage]):.4f}"
+            )
+
+        print(
+            "  Winding factor K [-]: "
+            f"min {np.min(K):.4f}, max {np.max(K):.4f}, mean {np.mean(K):.4f}"
+        )
+
+        d_nom = self.config.geom.d_nom
+        if np.any(finite_diam) and d_nom > 0:
+            utilization = diam[finite_diam] / d_nom
+            print(
+                "  Diameter utilization d/d_nom [-]: "
+                f"min {np.min(utilization):.4f}, "
+                f"max {np.max(utilization):.4f}, "
+                f"mean {np.mean(utilization):.4f}"
+            )
 
     def compute_alpha_discrete(
         self, pts: np.ndarray, ts: np.ndarray, thetas: np.ndarray, tol: float = 1e-3
@@ -490,6 +649,7 @@ class Stent(object):
         n_seg_total = 0
 
         # Loop over each wire
+        prog_wire = ProgressBar(Nw, "Meshing wires")
         for n_wire, wire in enumerate(wire_lines):
             # Get "old" centerpoint and normals
             c = wire[0][None, :]
@@ -528,6 +688,9 @@ class Stent(object):
                 n_seg_total += 1
 
             n_seg_total += 1
+            prog_wire.update(n_wire + 1)
+
+        prog_wire.close()
 
         # Reshape points and tetras
         points = points.reshape(-1, 3)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 from pathlib import Path
+import sys
+import time
 
 import numpy as np
 from functools import partial
 import multiprocessing as mp
 from scipy.interpolate import UnivariateSpline, RectBivariateSpline
-import meshio, vtk, time
+import meshio, vtk
 import vtkmodules.util.numpy_support as ns
 
 from py_geo_fd.centerlines import CenterLine
@@ -25,6 +27,55 @@ class Timer(object):
         if self.name:
             name = "%s - " % self.name
         print(name + "Elapsed: %.3f s" % (time.time() - self.tstart))
+
+
+class ProgressBar(object):
+    """Simple terminal progress bar for long-running loops."""
+
+    def __init__(
+        self,
+        total: int,
+        label: str,
+        width: int = 28,
+        min_interval: float = 0.25,
+        enabled: bool | None = None,
+    ) -> None:
+        self.total = max(int(total), 1)
+        self.label = label
+        self.width = width
+        self.min_interval = min_interval
+        self.enabled = sys.stdout.isatty() if enabled is None else enabled
+        self.start = time.perf_counter()
+        self.last_update = 0.0
+
+        if self.enabled:
+            self._draw(0)
+
+    def _draw(self, done: int) -> None:
+        done = max(0, min(done, self.total))
+        ratio = done / self.total
+        filled = int(self.width * ratio)
+        bar = "#" * filled + "-" * (self.width - filled)
+        elapsed = time.perf_counter() - self.start
+        msg = (
+            f"\r{self.label}: [{bar}] {100.0 * ratio:6.2f}% "
+            f"({done}/{self.total})  {elapsed:6.1f}s"
+        )
+        print(msg, end="", flush=True)
+
+    def update(self, done: int, force: bool = False) -> None:
+        if not self.enabled:
+            return
+        now = time.perf_counter()
+        if force or done >= self.total or (now - self.last_update) >= self.min_interval:
+            self._draw(done)
+            self.last_update = now
+
+    def close(self) -> None:
+        if not self.enabled:
+            return
+        self._draw(self.total)
+        print(flush=True)
 
 
 def cylinder_convolve(
@@ -227,8 +278,15 @@ def np_ray_triangle_intersection(
     trias [N_trias, N_edge, N_dim]
     """
 
+    if trias.size == 0:
+        if ray_dir.ndim == 1:
+            return np.inf * np.ones(1)
+        if ray_dir.shape[1] == 3:
+            return np.inf * np.ones(ray_dir.shape[0])
+        return np.inf * np.ones(ray_dir.shape[1])
+
     if ray_dir.ndim == 1:
-        ray_dir[None, :, None]
+        ray_dir = ray_dir[:, None]
     elif ray_dir.shape[1] == 3:
         ray_dir = ray_dir.T
 
@@ -271,9 +329,12 @@ def np_ray_triangle_intersection(
 
 
 def get_candidate_trias(
-    trias: np.ndarray, pt: np.ndarray | float, radius: float
+    trias: np.ndarray,
+    pt: np.ndarray | float,
+    radius: float,
+    centers: np.ndarray | None = None,
 ) -> np.ndarray:
-    center_pts = np.mean(trias, axis=1)
+    center_pts = centers if centers is not None else np.mean(trias, axis=1)
     candidates = np.where(np.linalg.norm(center_pts - pt[None], axis=1) < radius)
     return trias[candidates]
 
@@ -284,6 +345,7 @@ def distance_wall(
     th: np.ndarray,
     max_r: float,
     triangles: np.ndarray,
+    triangle_centers: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute distances between the centerline and the walls.
 
@@ -297,13 +359,21 @@ def distance_wall(
     Returns:
         np.ndarray: Centerline distances.
     """
-    direction = (
-        C.t1(t)[None, :] * np.cos(th)[:, None] + C.t2(t)[None, :] * np.sin(th)[:, None]
+    c_t = C(t)
+    t1_t = C.t1(t)
+    t2_t = C.t2(t)
+    cos_th = np.cos(th)
+    sin_th = np.sin(th)
+
+    direction = t1_t[None, :] * cos_th[:, None] + t2_t[None, :] * sin_th[:, None]
+    candidates = get_candidate_trias(
+        triangles,
+        c_t,
+        max_r,
+        centers=triangle_centers,
     )
 
-    distances = np_ray_triangle_intersection(
-        C(t), direction, get_candidate_trias(triangles, C(t), max_r)
-    )
+    distances = np_ray_triangle_intersection(c_t, direction, candidates)
 
     return distances
 
@@ -320,6 +390,7 @@ class Adapt_Radius(object):
 
         mesh = meshio.read(self.config.path)
         self.trias = mesh.points[mesh.cells_dict["triangle"]]
+        self.tria_centers = np.mean(self.trias, axis=1)
 
         max_rad = config.st.geom.d_nom * 0.5
         self.wire_radius = config.st.geom.wire_radius
@@ -331,17 +402,22 @@ class Adapt_Radius(object):
         t = np.linspace(self.C.s_start, self.C.s_end, N)
         dists = np.zeros((N, Nw))
 
-        with Timer("Generated equidistant interpolation points"):
-            get_intersection = partial(
-                distance_wall,
-                C=self.C,
-                th=th,
-                max_r=2 * max_rad,
-                triangles=self.trias,
-            )
+        get_intersection = partial(
+            distance_wall,
+            C=self.C,
+            th=th,
+            max_r=2 * max_rad,
+            triangles=self.trias,
+            triangle_centers=self.tria_centers,
+        )
 
-            with mp.Pool(processes=self.n_cpu) as pool:
-                dists = pool.map(get_intersection, t)
+        prog_dist = ProgressBar(len(t), "Interpolation point generation")
+        with mp.Pool(processes=self.n_cpu) as pool:
+            dists = []
+            for i, vals in enumerate(pool.imap(get_intersection, t), start=1):
+                dists.append(vals)
+                prog_dist.update(i)
+        prog_dist.close()
 
         dists = np.array(dists)
         is_far = dists > (max_rad + self.wire_radius)
