@@ -20,7 +20,7 @@
   },
   "wall_params": {
     "wall_path": "surface.stl",
-    "smoothing": 30,
+    "smoothing": 50,
     "margin": 0.0,
     "n_axial_segments": 128,
     "n_radial_segments": 72
