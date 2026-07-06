@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import os
 import sys
 import time
 
@@ -7,6 +8,7 @@ import numpy as np
 from functools import partial
 import multiprocessing as mp
 from scipy.interpolate import UnivariateSpline, RectBivariateSpline
+from scipy.spatial import cKDTree
 import meshio, vtk
 import vtkmodules.util.numpy_support as ns
 
@@ -44,7 +46,8 @@ class ProgressBar(object):
         self.label = label
         self.width = width
         self.min_interval = min_interval
-        self.enabled = sys.stdout.isatty() if enabled is None else enabled
+        env_enabled = os.getenv("PY_GEO_FD_PROGRESS", "1") != "0"
+        self.enabled = (sys.stdout.isatty() and env_enabled) if enabled is None else enabled
         self.start = time.perf_counter()
         self.last_update = 0.0
 
@@ -303,15 +306,16 @@ def np_ray_triangle_intersection(
 
     det = np.sum(edge1 * pvec, axis=1)
     inters = np.abs(det) >= eps
+    denom = np.where(inters, det, 1.0)
 
     tvec = ray_near - trias[:, 0]
-    u = np.sum(tvec * pvec, axis=1) / det
+    u = np.sum(tvec * pvec, axis=1) / denom
     inters[np.logical_or(u < 0.0, u > 1.0)] = False
 
     qvec = np.cross(tvec, edge1, axisa=1, axisb=1)
     qvec = np.swapaxes(qvec, 1, 2)
 
-    v = np.sum(ray_dir * qvec, axis=1) / det
+    v = np.sum(ray_dir * qvec, axis=1) / denom
     inters[np.logical_or(v < 0.0, u + v > 1.0)] = False
 
     dists = np.nan * np.ones((pvec.shape[0], pvec.shape[-1]))
@@ -333,7 +337,48 @@ def get_candidate_trias(
     pt: np.ndarray | float,
     radius: float,
     centers: np.ndarray | None = None,
+    tree: cKDTree | None = None,
+    center_radii: np.ndarray | None = None,
+    tri_mins: np.ndarray | None = None,
+    tri_maxs: np.ndarray | None = None,
 ) -> np.ndarray:
+    if tree is not None:
+        if center_radii is not None and len(center_radii) > 0:
+            # Conservative query radius that guarantees no missed candidates.
+            # A triangle can intersect the probe sphere if
+            # ||pt - center|| <= radius + triangle_radius.
+            query_r = radius + float(np.max(center_radii))
+        else:
+            query_r = radius
+
+        ids = tree.query_ball_point(pt, query_r)
+        if len(ids) == 0:
+            return trias[:0]
+
+        ids = np.asarray(ids, dtype=int)
+
+        if center_radii is not None:
+            ctr = centers[ids] if centers is not None else np.mean(trias[ids], axis=1)
+            dist = np.linalg.norm(ctr - pt[None], axis=1)
+            keep = dist <= (radius + center_radii[ids])
+            if not np.any(keep):
+                return trias[:0]
+            ids = ids[keep]
+
+        if tri_mins is not None and tri_maxs is not None and ids.size > 128:
+            # Conservative sphere-vs-AABB overlap test to remove obvious
+            # non-intersecting triangles before ray-triangle evaluation.
+            mins = tri_mins[ids]
+            maxs = tri_maxs[ids]
+            closest = np.maximum(mins, np.minimum(pt[None], maxs))
+            d2 = np.sum((closest - pt[None]) ** 2, axis=1)
+            keep = d2 <= radius * radius
+            if not np.any(keep):
+                return trias[:0]
+            ids = ids[keep]
+
+        return trias[ids]
+
     center_pts = centers if centers is not None else np.mean(trias, axis=1)
     candidates = np.where(np.linalg.norm(center_pts - pt[None], axis=1) < radius)
     return trias[candidates]
@@ -346,6 +391,10 @@ def distance_wall(
     max_r: float,
     triangles: np.ndarray,
     triangle_centers: np.ndarray | None = None,
+    triangle_tree: cKDTree | None = None,
+    triangle_center_radii: np.ndarray | None = None,
+    triangle_mins: np.ndarray | None = None,
+    triangle_maxs: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute distances between the centerline and the walls.
 
@@ -371,6 +420,10 @@ def distance_wall(
         c_t,
         max_r,
         centers=triangle_centers,
+        tree=triangle_tree,
+        center_radii=triangle_center_radii,
+        tri_mins=triangle_mins,
+        tri_maxs=triangle_maxs,
     )
 
     distances = np_ray_triangle_intersection(c_t, direction, candidates)
@@ -391,6 +444,11 @@ class Adapt_Radius(object):
         mesh = meshio.read(self.config.path)
         self.trias = mesh.points[mesh.cells_dict["triangle"]]
         self.tria_centers = np.mean(self.trias, axis=1)
+        self.tria_center_radii = np.max(
+            np.linalg.norm(self.trias - self.tria_centers[:, None, :], axis=2),
+            axis=1,
+        )
+        self.tria_tree = cKDTree(self.tria_centers)
 
         max_rad = config.st.geom.d_nom * 0.5
         self.wire_radius = config.st.geom.wire_radius
@@ -400,7 +458,7 @@ class Adapt_Radius(object):
 
         th = np.linspace(0, 2 * np.pi, Nw, endpoint=False)
         t = np.linspace(self.C.s_start, self.C.s_end, N)
-        dists = np.zeros((N, Nw))
+        dists = np.zeros((N, Nw), dtype=np.float64)
 
         get_intersection = partial(
             distance_wall,
@@ -409,17 +467,21 @@ class Adapt_Radius(object):
             max_r=2 * max_rad,
             triangles=self.trias,
             triangle_centers=self.tria_centers,
+            triangle_tree=self.tria_tree,
+            triangle_center_radii=self.tria_center_radii,
         )
 
         prog_dist = ProgressBar(len(t), "Interpolation point generation")
+        chunk_size = max(1, len(t) // max(1, 4 * self.n_cpu))
         with mp.Pool(processes=self.n_cpu) as pool:
-            dists = []
-            for i, vals in enumerate(pool.imap(get_intersection, t), start=1):
-                dists.append(vals)
+            for i, vals in enumerate(
+                pool.imap(get_intersection, t, chunksize=chunk_size),
+                start=1,
+            ):
+                dists[i - 1] = vals
                 prog_dist.update(i)
         prog_dist.close()
 
-        dists = np.array(dists)
         is_far = dists > (max_rad + self.wire_radius)
         dists[is_far] = max_rad
         dists -= self.wire_radius + self.config.margin

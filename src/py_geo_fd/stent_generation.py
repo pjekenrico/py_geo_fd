@@ -1,12 +1,13 @@
 from __future__ import annotations
 from typing import Callable
 from pathlib import Path
+import os
 import sys
 import time
 
 import meshio, vtk
 import numpy as np
-from scipy.integrate import quad, cumulative_trapezoid
+from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import UnivariateSpline, CubicSpline, RectBivariateSpline
 
 from py_geo_fd.centerlines import CenterLine, normalized
@@ -30,7 +31,8 @@ class ProgressBar(object):
         self.label = label
         self.width = width
         self.min_interval = min_interval
-        self.enabled = sys.stdout.isatty() if enabled is None else enabled
+        env_enabled = os.getenv("PY_GEO_FD_PROGRESS", "1") != "0"
+        self.enabled = (sys.stdout.isatty() and env_enabled) if enabled is None else enabled
         self.start = time.perf_counter()
         self.last_update = 0.0
 
@@ -105,10 +107,18 @@ def newton(
 
     err = np.inf
     for i in range(maxiter):
-        err = f(x0) / df(x0)
+        f0 = f(x0)
+        df0 = df(x0)
+
+        if not np.isfinite(df0) or np.abs(df0) < 1e-14:
+            return np.nan
+
+        err = f0 / df0
         x = x0 - w * err
-        if np.abs(err) < tol or np.abs(f(x0)) < tol or np.isnan(err):
+        if np.abs(err) < tol or np.abs(f0) < tol or not np.isfinite(err):
             return x
+        if not np.isfinite(x):
+            return np.nan
         x0 = x
     print(
         f"Warning: Newtons method did not converge with:\n\t|f(x)| = {np.abs(f(x0))}\n\t|f(x)/df(x)| = {np.abs(err)}\n Returning np.nan."
@@ -137,14 +147,15 @@ def rodrigues_rot(P: np.ndarray, n0: np.ndarray, n1: np.ndarray) -> np.ndarray:
     k = k / np.linalg.norm(k)
     theta = np.arccos(np.dot(n0, n1))
 
-    # Compute rotated points
-    P_rot = np.zeros((len(P), 3))
-    for i in range(len(P)):
-        P_rot[i] = (
-            P[i] * np.cos(theta)
-            + np.cross(k, P[i]) * np.sin(theta)
-            + k * np.dot(k, P[i]) * (1 - np.cos(theta))
-        )
+    cos_t = np.cos(theta)
+    sin_t = np.sin(theta)
+
+    # Vectorized Rodrigues rotation for all points at once.
+    P_rot = (
+        P * cos_t
+        + np.cross(k[None, :], P) * sin_t
+        + (np.dot(P, k)[:, None] * k[None, :]) * (1 - cos_t)
+    )
 
     return P_rot
 
@@ -179,6 +190,11 @@ class Stent(object):
 
         # Stent configuration
         self.config = config.st
+
+        # Shared quadrature grid for winding-factor integration.
+        self._kint_x = np.linspace(0.0, 2 * np.pi, 721)
+        self._kint_cos = np.cos(self._kint_x)
+        self._kint_norm = 2 * np.pi
 
         # t = np.linspace(2, 9, 20)
         # self.C.output_centerline_info(t=t, file_path="demo/centerline.vtp")
@@ -265,6 +281,9 @@ class Stent(object):
         # Compute the winding factor for a cylindrical stent
         K_cyl_local = 1 / np.sqrt(1 - (r / re) ** 2)
 
+        if r <= 0.0 or R <= 0.0:
+            return K_cyl_local
+
         # If the major radius is much larger than the wire radius,
         # return the winding factor for a cylindrical stent
         if R > 20 * r:
@@ -273,19 +292,40 @@ class Stent(object):
         # Under-relaxation factor for newtons method based on observations
         under_relaxation = (r / self.config.geom.d_nom) ** 2
 
-        # Define the function to integrate
-        def integ(K, r, R):
-            def K_comp(x):
-                return np.sqrt(1 - ((1 + r / R * np.cos(x)) / K) ** 2)
+        curvature_ratio = r / R
+        a = 1.0 + curvature_ratio * self._kint_cos
+        x = self._kint_x
+        eps = 1e-12
 
-            return quad(K_comp, 0, 2 * np.pi)[0] / (2 * np.pi)
+        def integ_and_dinteg(K: float) -> tuple[float, float]:
+            u = a / K
+            inside = np.clip(1.0 - u * u, eps, None)
+            g = np.sqrt(inside)
+            integ = np.trapezoid(g, x) / self._kint_norm
 
-        K = newton(
-            lambda K: r / re - integ(K, r, R),
-            lambda K: numerical_diff(lambda k: -integ(k, r=r, R=R), K),
-            x0=2 + r / R,
-            w=under_relaxation,
-        )
+            # d/dK sqrt(1 - (a/K)^2) = (a/K)^2 / (K * sqrt(1 - (a/K)^2))
+            dg_dK = (u * u) / (K * g)
+            d_integ = np.trapezoid(dg_dK, x) / self._kint_norm
+            return integ, d_integ
+
+        K = max(2 + curvature_ratio, K_cyl_local + 1e-6)
+        for _ in range(60):
+            integ, d_integ = integ_and_dinteg(K)
+            f = r / re - integ
+            df = -d_integ
+
+            if abs(f) < 1e-6:
+                break
+            if not np.isfinite(df) or abs(df) < 1e-12:
+                K = np.nan
+                break
+
+            step = under_relaxation * f / df
+            K_next = K - step
+            if not np.isfinite(K_next):
+                K = np.nan
+                break
+            K = max(K_next, K_cyl_local + 1e-6)
 
         if np.isnan(K) or K < K_cyl_local:
             print(
@@ -645,9 +685,6 @@ class Stent(object):
         # Compute centerpoints of all struts
         wire_lines = self.generate_pts()
 
-        # Count for total number of segments
-        n_seg_total = 0
-
         # Loop over each wire
         prog_wire = ProgressBar(Nw, "Meshing wires")
         for n_wire, wire in enumerate(wire_lines):
@@ -664,7 +701,8 @@ class Stent(object):
             base += c
 
             # Add first set of points
-            points[n_wire, 0] = np.concatenate((c, base))
+            points[n_wire, 0, 0] = c[0]
+            points[n_wire, 0, 1:] = base
 
             # For each segment in a strut
             for n_seg in range(N - 1):
@@ -679,15 +717,12 @@ class Stent(object):
                 base += c
 
                 # Add points to mesh
-                points[n_wire, n_seg + 1] = np.concatenate((c, base))
+                points[n_wire, n_seg + 1, 0] = c[0]
+                points[n_wire, n_seg + 1, 1:] = base
 
                 # Add connectivities
-                tetras[n_wire, n_seg] = tetras_segment + n_seg_total * (wire_res + 1)
-
-                # Increase the total number of segments
-                n_seg_total += 1
-
-            n_seg_total += 1
+                seg_id = n_wire * N + n_seg
+                tetras[n_wire, n_seg] = tetras_segment + seg_id * (wire_res + 1)
             prog_wire.update(n_wire + 1)
 
         prog_wire.close()
